@@ -1,0 +1,26 @@
+{
+  "name": "validosik.core.ioc",
+  "displayName": "IoC State Container",
+  "version": "0.0.1",
+  "unity": "6000.0",
+  "description": "Lightweight IoC with stateful containers and editor tooling for service migration",
+  "author": {
+    "name": "validosik"
+  },
+  "dependencies": {
+    "validosik.core.reflection": "0.0.1"
+  },
+  "samples": [
+    {
+      "displayName": "Basic Demo",
+      "path": "Samples~/Basic"
+    }
+  ],
+  "keywords": [
+    "ioc",
+    "di",
+    "container",
+    "state",
+    "editor"
+  ]
+}

@@ -1,0 +1,13 @@
+using System;
+
+namespace Validosik.Core.Ioc.Interfaces
+{
+    public interface IServiceContainer: IDisposable
+    {
+        T Resolve<T>() where T: class;
+        object Resolve(Type type);
+
+        bool TryResolve<T>(out T service) where T: class;
+        bool TryResolve(Type type, out object service);
+    }
+}
