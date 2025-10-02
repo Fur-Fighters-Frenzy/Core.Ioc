@@ -46,17 +46,20 @@ namespace Validosik.Core.Ioc
         }
 
         /// <summary>
-        /// SCC (strongly connected component). A *composite* node that contains one or many service types.
+        /// SCC (strongly connected component). A *composite* node that contains one or many service types
         /// </summary>
         internal sealed record CompositeNode
         {
-            /// <summary>Stable SCC id (index in condensation).</summary>
+            /// <summary>Stable SCC id (index in condensation)</summary>
             public int Id { get; }
 
-            /// <summary>Original services that belong to this component (>= 1).</summary>
+            /// <summary>Original services that belong to this component (>= 1)</summary>
             public IReadOnlyList<ServiceGraph.Node> Services { get; }
 
-            /// <summary>True if any member has a self-loop (S -> S) within this singleton component.</summary>
+            /// <summary>Full SCC membership (services + phantom deps)</summary>
+            public IReadOnlyList<Type> MemberTypes { get; }
+
+            /// <summary>True if any member has a self-loop (S -> S) within this singleton component</summary>
             public bool HasSelfLoop { get; }
 
             /// <summary>True if this component contains >1 service OR is a singleton with self-loop.</summary>
@@ -67,22 +70,24 @@ namespace Validosik.Core.Ioc
             {
                 get
                 {
-                    if (Services == null || Services.Count == 0) return $"SCC#{Id} []";
-                    if (Services.Count == 1)
-                    {
-                        var t = Services[0].Type;
-                        return t.FullName ?? t.Name;
-                    }
+                    // Prefer real service types for display; fallback to all member types.
+                    var names = Services is { Count: > 0 }
+                        ? Services.Select(s => s.Type.Name)
+                        : (MemberTypes is { Count: > 0 }
+                            ? MemberTypes.Select(t => t.Name)
+                            : new[] { $"SCC#{Id}" });
 
-                    var names = string.Join(", ", Services.Select(s => s.Type.Name));
-                    return $"SCC#{Id} [{names}]";
+                    var joined = string.Join(", ", names);
+                    return IsCyclic ? $"Cycle: {joined}" : joined;
                 }
             }
 
-            public CompositeNode(int id, IReadOnlyList<ServiceGraph.Node> services, bool hasSelfLoop)
+            public CompositeNode(int id, IReadOnlyList<ServiceGraph.Node> services, IReadOnlyList<Type> memberTypes,
+                bool hasSelfLoop)
             {
                 Id = id;
                 Services = services ?? Array.Empty<ServiceGraph.Node>();
+                MemberTypes = memberTypes ?? Array.Empty<Type>();
                 HasSelfLoop = hasSelfLoop;
             }
         }

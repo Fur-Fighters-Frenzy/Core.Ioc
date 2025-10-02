@@ -73,9 +73,16 @@ namespace Validosik.Core.Ioc
                 }
             }
 
-            // 4) Build composite nodes (SCCs) with self-loop info
+            // build SCC membership (types) map
+            var sccMembers = Enumerable.Range(0, sccCount).Select(_ => new List<Type>()).ToList();
+            for (var i = 0; i < allTypes.Count; ++i)
+            {
+                sccMembers[comp[i]].Add(allTypes[i]);
+            }
+
+            // 4) Build composite nodes (SCCs) with self-loop info and member types
             var components = new List<CompositeNode>(sccCount);
-            for (var id = 0; id < sccCount; id++)
+            for (var id = 0; id < sccCount; ++id)
             {
                 // If component is a singleton and we had a recorded self-loop on its vertex -> HasSelfLoop = true
                 var hasSelf = false;
@@ -90,6 +97,7 @@ namespace Validosik.Core.Ioc
                 components.Add(new CompositeNode(
                     id,
                     sccServices[id],
+                    sccMembers[id],
                     hasSelf
                 ));
             }
