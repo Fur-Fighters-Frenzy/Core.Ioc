@@ -1,15 +1,20 @@
 {
-    "name": "Validosik.Core.Ioc.Editor",
-    "rootNamespace": "Validosik.Core.Ioc.Editor",
-    "references": [ "Validosik.Core.Ioc" ],
-    "includePlatforms": [ "Editor" ],
-    "excludePlatforms": [],
-    "allowUnsafeCode": false,
-    "overrideReferences": false,
-    "precompiledReferences": [],
-    "autoReferenced": true,
-    "defineConstraints": [],
-    "versionDefines": [],
-    "noEngineReferences": false
-  }
+  "name": "Validosik.Core.Ioc.Editor",
+  "rootNamespace": "Validosik.Core.Ioc.Editor",
+  "references": [
+    "Validosik.Core.Ioc",
+    "Validosik.Core.Reflection"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
   
