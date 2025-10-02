@@ -1,4 +1,5 @@
 using System;
+using Validosik.Core.Ioc.Resolvers;
 
 namespace Validosik.Core.Ioc.Interfaces
 {
@@ -9,5 +10,7 @@ namespace Validosik.Core.Ioc.Interfaces
 
         bool TryResolve<T>(out T service) where T: class;
         bool TryResolve(Type type, out object service);
+
+        void SetResolverContextFunc(Func<ResolverContext> getResolverContext);
     }
 }

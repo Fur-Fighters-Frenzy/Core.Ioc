@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using JetBrains.Annotations;
 using Validosik.Core.Ioc.Interfaces;
 using Validosik.Core.Ioc.Generated;
 using Validosik.Core.Ioc.Resolvers;
@@ -11,24 +12,27 @@ namespace Validosik.Core.Ioc
     /// <summary>
     /// DI container with Shared/Scoped/Transient lifetimes + resolver-aware bindings.
     /// </summary>
-    public class ServiceContainer : IServiceContainer
+    internal class ServiceContainer : IServiceContainer
     {
+        private static readonly ResolverContext _defaultResolverContext = new ResolverContext();
+
         private readonly Dictionary<Type, Binding> _bindings; // interface -> binding
         private readonly Dictionary<Type, object> _scopedSingles; // interface -> instance (Scoped only)
         private readonly Func<Type, object> _getShared; // get from manager-shared storage
         private readonly Action<Type, object> _putShared; // put into manager-shared storage
-        private readonly Func<ResolverContext> _getResolverContext;
+
+        private Func<ResolverContext> _getResolverContext;
 
         public ServiceContainer(IEnumerable<Binding> bindings,
             Func<Type, object> getShared,
             Action<Type, object> putShared,
-            Func<ResolverContext> getResolverContext)
+            [CanBeNull] Func<ResolverContext> getResolverContext)
         {
             _bindings = new Dictionary<Type, Binding>();
             _scopedSingles = new Dictionary<Type, object>();
             _getShared = getShared;
             _putShared = putShared;
-            _getResolverContext = getResolverContext ?? (() => new ResolverContext());
+            _getResolverContext = getResolverContext ?? (() => _defaultResolverContext);
 
             foreach (var b in bindings)
             {
@@ -47,6 +51,11 @@ namespace Validosik.Core.Ioc
             }
 
             _scopedSingles.Clear();
+        }
+
+        public void SetResolverContextFunc([NotNull] Func<ResolverContext> getResolverContext)
+        {
+            _getResolverContext = getResolverContext;
         }
 
         public T Resolve<T>() where T : class => (T)Resolve(typeof(T));

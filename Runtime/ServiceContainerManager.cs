@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using JetBrains.Annotations;
 using Validosik.Core.Ioc.Generated;
 using Validosik.Core.Ioc.Interfaces;
 using Validosik.Core.Ioc.Resolvers;
@@ -17,17 +18,18 @@ namespace Validosik.Core.Ioc
 
         private readonly Dictionary<Type, object> _shared = new Dictionary<Type, object>(); // interface->instance
         private string _activeKey;
-        private ResolverContext _context = new ResolverContext();
+
+        public event Action<string> ContainerSwitched;
 
         public ServiceContainerManager()
         {
             DiscoverFromGeneratedResolver();
         }
 
-        public void SetResolverContext(ResolverContext ctx) => _context = ctx ?? new ResolverContext();
-        internal ResolverContext GetResolverContext() => _context;
+        public string CurrentKey => _activeKey;
 
-        public virtual void CreateContainer(string key, IEnumerable<Binding> bindings)
+        public virtual void CreateContainer(string key, IEnumerable<Binding> bindings,
+            [CanBeNull] Func<ResolverContext> getResolverContext)
         {
             if (string.IsNullOrEmpty(key))
             {
@@ -43,24 +45,14 @@ namespace Validosik.Core.Ioc
                 bindings,
                 getShared: t => _shared.TryGetValue(t, out var v) ? v : null,
                 putShared: (t, o) => _shared[t] = o,
-                getResolverContext: () => _context
+                getResolverContext: getResolverContext
             );
             _containers[key] = container;
 
             _activeKey ??= key;
         }
 
-        public virtual IServiceContainer GetContainer(string key)
-        {
-            if (!_containers.TryGetValue(key, out var c))
-            {
-                throw new KeyNotFoundException("No container: " + key);
-            }
-
-            return c;
-        }
-
-        public virtual void SwitchContainer(string key)
+        public virtual void SwitchContainer(string key, [CanBeNull] Func<ResolverContext> getResolverContext)
         {
             if (string.IsNullOrEmpty(key))
             {
@@ -73,15 +65,51 @@ namespace Validosik.Core.Ioc
             }
 
             _activeKey = key; // Shared lives in _shared; nothing else to do
+            if (getResolverContext != null)
+            {
+                var container = CurrentContainerOrThrow();
+                container.SetResolverContextFunc(getResolverContext);
+            }
+
+            ContainerSwitched?.Invoke(key);
         }
 
-        public IServiceContainer Current => _activeKey != null ? _containers[_activeKey] : null;
+        public T Resolve<T>() where T : class => (T)Resolve(typeof(T));
+
+        public object Resolve(Type interfaceType)
+        {
+            var container = CurrentContainerOrThrow();
+            return container.Resolve(interfaceType);
+        }
+
+        public bool TryResolve<T>(out T service) where T : class
+        {
+            var ok = TryResolve(typeof(T), out var obj);
+            service = ok ? (T)obj : null;
+            return ok;
+        }
+
+        public bool TryResolve(Type t, out object obj)
+        {
+            var container = CurrentContainerOrThrow();
+            return container.TryResolve(t, out obj);
+        }
+
+        private IServiceContainer CurrentContainerOrThrow()
+        {
+            if (_activeKey == null || !_containers.TryGetValue(_activeKey, out var container))
+            {
+                throw new InvalidOperationException("No active container");
+            }
+
+            return container;
+        }
 
         private void DiscoverFromGeneratedResolver()
         {
             foreach (var reg in Validosik.Core.Ioc.Generated.ContainerRegistrySource.GetAll())
             {
-                CreateContainer(reg.ContainerKey, reg.GetBindings());
+                CreateContainer(reg.ContainerKey, reg.GetBindings(), null);
             }
         }
     }
