@@ -13,7 +13,7 @@ namespace Validosik.Core.Editor.Ioc.CodeGeneration
     internal static class ContainerCodeGenerator
     {
         public static void EmitRegistry(string containerKey,
-            IList<(Type iface, Type impl, ServiceLifetime lt)> bindings, string outputDir)
+            IList<(Type iface, Type impl, ServiceLifetime lt, Type resolver)> bindings, string outputDir)
         {
             if (string.IsNullOrEmpty(containerKey)) throw new ArgumentException("containerKey");
             if (string.IsNullOrEmpty(outputDir)) throw new ArgumentException("outputDir");
@@ -42,10 +42,21 @@ namespace Validosik.Core.Editor.Ioc.CodeGeneration
             for (var i = 0; i < bindings.Count; i++)
             {
                 var b = bindings[i];
-                sb.Append("                new Binding(typeof(")
-                    .Append(b.iface.FullName).Append("), typeof(")
-                    .Append(b.impl.FullName).Append("), ServiceLifetime.")
-                    .Append(b.lt.ToString()).Append(")");
+                if (b.resolver == null)
+                {
+                    sb.Append("                new Binding(typeof(")
+                        .Append(b.iface.FullName).Append("), typeof(")
+                        .Append(b.impl.FullName).Append("), ServiceLifetime.")
+                        .Append(b.lt.ToString()).Append(")");
+                }
+                else
+                {
+                    sb.Append("                new Binding(typeof(")
+                        .Append(b.iface.FullName).Append("), typeof(")
+                        .Append(b.resolver.FullName).Append("), ServiceLifetime.")
+                        .Append(b.lt.ToString()).Append(", true)");
+                }
+
                 if (i + 1 < bindings.Count) sb.Append(",");
                 sb.AppendLine();
             }

@@ -164,8 +164,8 @@ namespace Validosik.Core.Editor.Ioc
                         continue;
                     }
 
-                        _resolvers.Add(t);
-                        break;
+                    _resolvers.Add(t);
+                    break;
                 }
             }
         }
@@ -650,7 +650,7 @@ namespace Validosik.Core.Editor.Ioc
 
         private void GenerateRegistry(ContainerSpec container)
         {
-            var bindings = new List<(Type iface, Type impl, ServiceLifetime lt)>(container.Rows.Count);
+            var bindings = new List<(Type iface, Type impl, ServiceLifetime lt, Type resolver)>(container.Rows.Count);
 
             for (var i = 0; i < container.Rows.Count; ++i)
             {
@@ -660,21 +660,22 @@ namespace Validosik.Core.Editor.Ioc
                 if (row.UseResolver)
                 {
                     if (row.ResolverType == null)
+                    {
                         throw new InvalidOperationException("Resolver is not selected for interface " +
                                                             row.InterfaceType.FullName);
+                    }
 
-                    // v1: skip resolver-bindings in codegen (runtime resolver support can be added later).
-                    Debug.LogWarning("Resolver binding skipped in codegen for interface " + row.InterfaceType.FullName +
-                                     " (explicit implementation required in v1).");
-                    continue;
+                    bindings.Add((row.InterfaceType, null, lifetime, row.ResolverType));
                 }
                 else
                 {
                     if (row.ImplementationType == null)
+                    {
                         throw new InvalidOperationException("Implementation is not selected for interface " +
                                                             row.InterfaceType.FullName);
+                    }
 
-                    bindings.Add((row.InterfaceType, row.ImplementationType, lifetime));
+                    bindings.Add((row.InterfaceType, row.ImplementationType, lifetime, null));
                 }
             }
 

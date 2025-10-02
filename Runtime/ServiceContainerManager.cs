@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using Validosik.Core.Ioc.Generated;
 using Validosik.Core.Ioc.Interfaces;
+using Validosik.Core.Ioc.Resolvers;
 
 namespace Validosik.Core.Ioc
 {
     /// <summary>
-    /// Orchestrates multiple containers (scopes) and one shared storage for Shared lifetime.
+    /// Orchestrates multiple containers (scopes) and one shared storage.
     /// Discovers generated registries via reflection at startup.
+    /// Holds ResolverContext used by resolver bindings.
     /// </summary>
     public class ServiceContainerManager
     {
@@ -17,11 +19,20 @@ namespace Validosik.Core.Ioc
 
         private readonly Dictionary<Type, object> _shared = new Dictionary<Type, object>(); // interface->instance
         private string _activeKey;
+        private ResolverContext _context = new ResolverContext();
 
         public ServiceContainerManager()
         {
             DiscoverGeneratedRegistries();
         }
+
+        /// <summary>Set/replace the resolver context (affects future resolves; existing Scoped/Shared instances remain until scope switch)</summary>
+        public void SetResolverContext(ResolverContext ctx)
+        {
+            _context = ctx ?? new ResolverContext();
+        }
+
+        internal ResolverContext GetResolverContext() => _context;
 
         public virtual void CreateContainer(string key, IEnumerable<Binding> bindings)
         {
@@ -37,11 +48,12 @@ namespace Validosik.Core.Ioc
 
             var container = new ServiceContainer(
                 bindings,
-                getShared: (interfaceType) => _shared.TryGetValue(interfaceType, out var v) ? v : null,
-                putShared: (interfaceType, obj) => { _shared[interfaceType] = obj; }
+                getShared: interfaceType => _shared.TryGetValue(interfaceType, out var v) ? v : null,
+                putShared: (interfaceType, obj) => { _shared[interfaceType] = obj; },
+                getResolverContext: () => _context
             );
-            _containers[key] = container;
 
+            _containers[key] = container;
             _activeKey ??= key;
         }
 
@@ -57,10 +69,17 @@ namespace Validosik.Core.Ioc
 
         public virtual void SwitchContainer(string key)
         {
-            if (string.IsNullOrEmpty(key)) throw new ArgumentException("key");
-            if (!_containers.ContainsKey(key)) throw new KeyNotFoundException("No container: " + key);
+            if (string.IsNullOrEmpty(key))
+            {
+                throw new ArgumentException("key");
+            }
 
-            // Shared instances stay in _shared; nothing to transfer here because ServiceContainer reads/writes through delegates.
+            if (!_containers.ContainsKey(key))
+            {
+                throw new KeyNotFoundException("No container: " + key);
+            }
+
+            // Shared instances remain in _shared
             _activeKey = key;
         }
 
