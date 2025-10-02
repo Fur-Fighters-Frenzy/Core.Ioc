@@ -182,10 +182,22 @@ namespace Validosik.Core.Ioc
             }
 
             var args = new object[ps.Length];
-            for (var i = 0; i < ps.Length; i++)
+            for (var i = 0; i < ps.Length; ++i)
             {
                 var pt = UnwrapParamType(ps[i]);
-                args[i] = pt == null ? GetDefault(ps[i].ParameterType) : Resolve(pt);
+                if (pt == null)
+                {
+                    args[i] = GetDefault(ps[i].ParameterType);
+                    continue;
+                }
+
+                if (pt.IsAssignableFrom(impl))
+                {
+                    throw new InvalidOperationException(impl.Name +
+                                                        " type contains itself in its constructor. Please fix this.");
+                }
+
+                args[i] = Resolve(pt);
             }
 
             return chosen.Invoke(args);
