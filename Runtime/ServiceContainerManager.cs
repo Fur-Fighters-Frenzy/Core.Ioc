@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Validosik.Core.Ioc.Generated;
 using Validosik.Core.Ioc.Interfaces;
 using Validosik.Core.Ioc.Resolvers;
@@ -8,9 +7,8 @@ using Validosik.Core.Ioc.Resolvers;
 namespace Validosik.Core.Ioc
 {
     /// <summary>
-    /// Orchestrates multiple containers (scopes) and one shared storage.
-    /// Discovers generated registries via reflection at startup.
-    /// Holds ResolverContext used by resolver bindings.
+    /// Orchestrates multiple containers and a shared storage.
+    /// Uses generated ContainerRegistryResolver (no assembly scan).
     /// </summary>
     public class ServiceContainerManager
     {
@@ -23,15 +21,10 @@ namespace Validosik.Core.Ioc
 
         public ServiceContainerManager()
         {
-            DiscoverGeneratedRegistries();
+            DiscoverFromGeneratedResolver();
         }
 
-        /// <summary>Set/replace the resolver context (affects future resolves; existing Scoped/Shared instances remain until scope switch)</summary>
-        public void SetResolverContext(ResolverContext ctx)
-        {
-            _context = ctx ?? new ResolverContext();
-        }
-
+        public void SetResolverContext(ResolverContext ctx) => _context = ctx ?? new ResolverContext();
         internal ResolverContext GetResolverContext() => _context;
 
         public virtual void CreateContainer(string key, IEnumerable<Binding> bindings)
@@ -48,12 +41,12 @@ namespace Validosik.Core.Ioc
 
             var container = new ServiceContainer(
                 bindings,
-                getShared: interfaceType => _shared.TryGetValue(interfaceType, out var v) ? v : null,
-                putShared: (interfaceType, obj) => { _shared[interfaceType] = obj; },
+                getShared: t => _shared.TryGetValue(t, out var v) ? v : null,
+                putShared: (t, o) => _shared[t] = o,
                 getResolverContext: () => _context
             );
-
             _containers[key] = container;
+
             _activeKey ??= key;
         }
 
@@ -79,33 +72,15 @@ namespace Validosik.Core.Ioc
                 throw new KeyNotFoundException("No container: " + key);
             }
 
-            // Shared instances remain in _shared
-            _activeKey = key;
+            _activeKey = key; // Shared lives in _shared; nothing else to do
         }
 
         public IServiceContainer Current => _activeKey != null ? _containers[_activeKey] : null;
 
-        private void DiscoverGeneratedRegistries()
+        private void DiscoverFromGeneratedResolver()
         {
-            var registries = AppDomain.CurrentDomain.GetAssemblies()
-                .Where(a => !a.IsDynamic)
-                .SelectMany(a =>
-                {
-                    try
-                    {
-                        return a.GetTypes();
-                    }
-                    catch
-                    {
-                        return Type.EmptyTypes;
-                    }
-                })
-                .Where(t => t is { IsAbstract: false } && typeof(IGeneratedContainerRegistry).IsAssignableFrom(t))
-                .ToArray();
-
-            foreach (var t in registries)
+            foreach (var reg in Validosik.Core.Ioc.Generated.ContainerRegistrySource.GetAll())
             {
-                var reg = (IGeneratedContainerRegistry)Activator.CreateInstance(t);
                 CreateContainer(reg.ContainerKey, reg.GetBindings());
             }
         }

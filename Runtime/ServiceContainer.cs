@@ -9,18 +9,15 @@ using Validosik.Core.Ioc.Resolvers;
 namespace Validosik.Core.Ioc
 {
     /// <summary>
-    /// Simple DI container with Shared/Scoped/Transient lifetimes.
-    /// Supports resolver bindings: interface -> resolver -> implementation type at runtime.
-    /// Resolver decision is sticky per scope for Scoped/Shared, and evaluated on every call for Transient.
+    /// DI container with Shared/Scoped/Transient lifetimes + resolver-aware bindings.
     /// </summary>
     public class ServiceContainer : IServiceContainer
     {
         private readonly Dictionary<Type, Binding> _bindings; // interface -> binding
         private readonly Dictionary<Type, object> _scopedSingles; // interface -> instance (Scoped only)
-        private readonly Dictionary<Type, object> _resolverCache; // resolver type -> instance
-        private readonly Func<Type, object> _getShared; // shared (by interface)
-        private readonly Action<Type, object> _putShared;
-        private readonly Func<ResolverContext> _getResolverContext; // provided by manager
+        private readonly Func<Type, object> _getShared; // get from manager-shared storage
+        private readonly Action<Type, object> _putShared; // put into manager-shared storage
+        private readonly Func<ResolverContext> _getResolverContext;
 
         public ServiceContainer(IEnumerable<Binding> bindings,
             Func<Type, object> getShared,
@@ -29,7 +26,6 @@ namespace Validosik.Core.Ioc
         {
             _bindings = new Dictionary<Type, Binding>();
             _scopedSingles = new Dictionary<Type, object>();
-            _resolverCache = new Dictionary<Type, object>();
             _getShared = getShared;
             _putShared = putShared;
             _getResolverContext = getResolverContext ?? (() => new ResolverContext());
@@ -51,31 +47,34 @@ namespace Validosik.Core.Ioc
             }
 
             _scopedSingles.Clear();
-            _resolverCache.Clear();
         }
 
         public T Resolve<T>() where T : class => (T)Resolve(typeof(T));
 
         public object Resolve(Type interfaceType)
         {
-            if (interfaceType == null) throw new ArgumentNullException(nameof(interfaceType));
+            if (interfaceType == null)
+            {
+                throw new ArgumentNullException(nameof(interfaceType));
+            }
+
             if (!_bindings.TryGetValue(interfaceType, out var binding))
             {
                 throw new InvalidOperationException("No binding for " + interfaceType.FullName);
             }
 
-            // Shared/Scoped caches are keyed by interfaceType (not by implementation)
+            // Lifetime cache keys are the interface type (intended semantic).
             switch (binding.Lifetime)
             {
                 case ServiceLifetime.Shared:
                 {
-                    var reusable = _getShared(interfaceType);
-                    if (reusable != null)
+                    var shared = _getShared(interfaceType);
+                    if (shared != null)
                     {
-                        return reusable;
+                        return shared;
                     }
 
-                    var created = CreateForBinding(binding);
+                    var created = CreateForBinding(interfaceType, binding);
                     _putShared(interfaceType, created);
                     return created;
                 }
@@ -86,15 +85,14 @@ namespace Validosik.Core.Ioc
                         return existing;
                     }
 
-                    var created = CreateForBinding(binding);
+                    var created = CreateForBinding(interfaceType, binding);
                     _scopedSingles[interfaceType] = created;
                     return created;
                 }
                 case ServiceLifetime.Transient:
-                    return CreateForBinding(binding);
+                    return CreateForBinding(interfaceType, binding);
 
-                default:
-                    throw new ArgumentOutOfRangeException();
+                default: throw new ArgumentOutOfRangeException();
             }
         }
 
@@ -119,60 +117,38 @@ namespace Validosik.Core.Ioc
             }
         }
 
-        // ---- core helpers ----
-
-        private object CreateForBinding(Binding binding)
+        private object CreateForBinding(Type interfaceType, Binding binding)
         {
-            // Direct implementation
             if (!binding.UsesResolver)
             {
-                return Create(binding.ImplementationType);
+                // Normal implementation binding
+                return Create(binding.TargetType);
             }
 
-            // Resolver path: pick impl type first
-            var implType = ResolveImplementationViaResolver(binding);
-            if (implType == null)
+            // binding.TargetType is resolver type: IContainableResolver<TInterface>
+            var resolver = Activator.CreateInstance(binding.TargetType);
+            // Call resolver.Resolve(ResolverContext)
+            var m = binding.TargetType.GetMethod("Resolve", BindingFlags.Instance | BindingFlags.Public);
+            if (m == null)
             {
-                throw new InvalidOperationException(
-                    $"Resolver {binding.ResolverType?.FullName} returned null for {binding.InterfaceType?.FullName}");
+                throw new InvalidOperationException("Resolver.Resolve(ctx) not found on " +
+                                                    binding.TargetType.FullName);
             }
 
-            if (!binding.InterfaceType.IsAssignableFrom(implType))
+            var implType = (Type)m.Invoke(resolver, new object[] { _getResolverContext() });
+            if (implType == null || !interfaceType.IsAssignableFrom(implType))
             {
-                throw new InvalidOperationException(
-                    $"Resolver returned {implType.FullName} which does not implement {binding.InterfaceType.FullName}");
+                throw new InvalidOperationException("Resolver returned invalid type for " + interfaceType.FullName);
             }
 
             return Create(implType);
         }
 
-        private Type ResolveImplementationViaResolver(Binding binding)
-        {
-            // cache resolver instance per-container
-            if (!_resolverCache.TryGetValue(binding.ResolverType, out var resolverObj))
-            {
-                resolverObj = Create(binding.ResolverType);
-                _resolverCache[binding.ResolverType] = resolverObj;
-            }
-
-            // call Resolve(ctx)
-            var m = binding.ResolverType.GetMethod("Resolve", BindingFlags.Public | BindingFlags.Instance);
-            if (m == null)
-            {
-                throw new InvalidOperationException("Resolver has no Resolve(ctx) method: " +
-                                                    binding.ResolverType.FullName);
-            }
-
-            var implType = (Type)m.Invoke(resolverObj, new object[] { _getResolverContext() });
-            return implType;
-        }
-
         private object Create(Type impl)
         {
-            // Pick constructor: [Inject] > single public > public with max params
             var constructors = impl.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
-            ConstructorInfo chosen = null;
 
+            ConstructorInfo chosen = null;
             if (constructors.Length == 1) chosen = constructors[0];
             if (chosen == null)
             {
@@ -200,13 +176,7 @@ namespace Validosik.Core.Ioc
             for (var i = 0; i < ps.Length; i++)
             {
                 var pt = UnwrapParamType(ps[i]);
-                if (pt == null)
-                {
-                    args[i] = GetDefault(ps[i].ParameterType);
-                    continue;
-                }
-
-                args[i] = Resolve(pt); // resolve by interface
+                args[i] = pt == null ? GetDefault(ps[i].ParameterType) : Resolve(pt);
             }
 
             return chosen.Invoke(args);
@@ -219,16 +189,10 @@ namespace Validosik.Core.Ioc
             {
                 var def = pt.GetGenericTypeDefinition();
                 if (def == typeof(IEnumerable<>) || def == typeof(Lazy<>) || def == typeof(Func<>))
-                {
                     return pt.GetGenericArguments()[0];
-                }
             }
 
-            if (pt.IsPrimitive || pt == typeof(string))
-            {
-                return null;
-            }
-
+            if (pt.IsPrimitive || pt == typeof(string)) return null;
             return pt;
         }
 

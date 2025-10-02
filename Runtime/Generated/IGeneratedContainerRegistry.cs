@@ -4,7 +4,7 @@ namespace Validosik.Core.Ioc.Generated
 {
     /// <summary>
     /// Implemented by generated container registries (codegen output).
-    /// Manager discovers all registries at startup and orchestrates containers.
+    /// Manager discovers registries via ContainerRegistryResolver (no assembly scan).
     /// </summary>
     public interface IGeneratedContainerRegistry
     {
@@ -17,32 +17,31 @@ namespace Validosik.Core.Ioc.Generated
     }
 
     /// <summary>
-    /// DTO for generated bindings. Either ImplementationType OR ResolverType is set
+    /// Binding DTO.
+    /// - If UsesResolver == false: TargetType is implementation type.
+    /// - If UsesResolver == true:  TargetType is resolver type (IContainableResolver<T>).
     /// </summary>
     public sealed class Binding
     {
         public Type InterfaceType { get; private set; }
-        public Type ImplementationType { get; private set; } // nullable when using resolver
-        public Type ResolverType { get; private set; }       // nullable when direct impl
+        public Type TargetType { get; private set; }
         public ServiceLifetime Lifetime { get; private set; }
+        public bool UsesResolver { get; private set; }
 
-        public bool UsesResolver { get { return ResolverType != null; } }
-
-        public Binding(Type interfaceType, Type implementation, ServiceLifetime lifetime)
+        public Binding(Type interfaceType, Type targetType, ServiceLifetime lifetime)
         {
             InterfaceType = interfaceType;
-            ImplementationType = implementation;
-            ResolverType = null;
+            TargetType = targetType;
             Lifetime = lifetime;
+            UsesResolver = false;
         }
 
-        public Binding(Type interfaceType, Type resolverType, ServiceLifetime lifetime, bool _useResolverOverload)
+        public Binding(Type interfaceType, Type resolverType, ServiceLifetime lifetime, bool usesResolver)
         {
-            // Overload tag avoids ctor ambiguity (stringly API from codegen)
             InterfaceType = interfaceType;
-            ResolverType = resolverType;
-            ImplementationType = null;
+            TargetType = resolverType;
             Lifetime = lifetime;
+            UsesResolver = usesResolver;
         }
     }
 }

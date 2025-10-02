@@ -245,18 +245,6 @@ namespace Validosik.Core.Editor.Ioc
                 }
             }
 
-            if (GUILayout.Button("Generate Current Registry", GUILayout.Width(200)))
-            {
-                try
-                {
-                    GenerateRegistry(_containers[_containerIndex]);
-                }
-                catch (Exception e)
-                {
-                    Debug.LogException(e);
-                }
-            }
-
             if (GUILayout.Button("Generate All Registries", GUILayout.Width(200)))
             {
                 try
@@ -648,42 +636,6 @@ namespace Validosik.Core.Editor.Ioc
             return pt;
         }
 
-        private void GenerateRegistry(ContainerSpec container)
-        {
-            var bindings = new List<(Type iface, Type impl, ServiceLifetime lt, Type resolver)>(container.Rows.Count);
-
-            for (var i = 0; i < container.Rows.Count; ++i)
-            {
-                var row = container.Rows[i];
-                var lifetime = row.LifetimeOverride ?? row.LifetimeDefault;
-
-                if (row.UseResolver)
-                {
-                    if (row.ResolverType == null)
-                    {
-                        throw new InvalidOperationException("Resolver is not selected for interface " +
-                                                            row.InterfaceType.FullName);
-                    }
-
-                    bindings.Add((row.InterfaceType, null, lifetime, row.ResolverType));
-                }
-                else
-                {
-                    if (row.ImplementationType == null)
-                    {
-                        throw new InvalidOperationException("Implementation is not selected for interface " +
-                                                            row.InterfaceType.FullName);
-                    }
-
-                    bindings.Add((row.InterfaceType, row.ImplementationType, lifetime, null));
-                }
-            }
-
-            const string outDir = "Assets/Generated/Containable";
-            ContainerCodeGenerator.EmitRegistry(container.Key, bindings, outDir);
-            Debug.Log("[Containable] Generated: " + outDir + "/" + container.Key + "_Registry.g.cs");
-        }
-
         private void GenerateAllRegistries()
         {
             if (_containers.Count == 0)
@@ -692,7 +644,33 @@ namespace Validosik.Core.Editor.Ioc
                 return;
             }
 
-            for (var c = 0; c < _containers.Count; c++) GenerateRegistry(_containers[c]);
+            var all =
+                new List<(string containerKey, IList<(Type iface, Type impl, ServiceLifetime lt, Type resolver)>
+                    bindings)>(_containers.Count);
+
+            for (var c = 0; c < _containers.Count; ++c)
+            {
+                var cont = _containers[c];
+                var bindings = new List<(Type iface, Type impl, ServiceLifetime lt, Type resolver)>(cont.Rows.Count);
+
+                for (var i = 0; i < cont.Rows.Count; ++i)
+                {
+                    var row = cont.Rows[i];
+
+                    bindings.Add((
+                        row.InterfaceType,
+                        row.UseResolver ? null : row.ImplementationType,
+                        row.LifetimeOverride ?? row.LifetimeDefault,
+                        row.UseResolver ? row.ResolverType : null
+                    ));
+                }
+
+                all.Add((cont.Key, bindings));
+            }
+
+            const string outDir = "Assets/Generated/Containable";
+            ContainerCodeGenerator.EmitAll(outDir, all);
+            Debug.Log("[Containable] Generated ALL registries and index into: " + outDir);
         }
 
         // ---------- JSON ----------
