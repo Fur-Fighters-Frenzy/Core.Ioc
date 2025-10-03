@@ -257,6 +257,18 @@ namespace Validosik.Core.Editor.Ioc
                 }
             }
 
+            if (GUILayout.Button("Save JSON", GUILayout.Width(100)))
+            {
+                try
+                {
+                    SaveJson();
+                }
+                catch (Exception e)
+                {
+                    Debug.LogException(e);
+                }
+            }
+
             EditorGUILayout.EndHorizontal();
         }
 
@@ -371,6 +383,7 @@ namespace Validosik.Core.Editor.Ioc
                     }
                 }
 
+                GUI.enabled = !row.UseResolver;
                 var lifetime = row.LifetimeOverride ?? row.LifetimeDefault;
                 var newLt = (ServiceLifetime)EditorGUILayout.EnumPopup("Lifetime", lifetime, GUILayout.Width(260));
                 if (newLt != lifetime)
@@ -378,6 +391,8 @@ namespace Validosik.Core.Editor.Ioc
                     row.LifetimeOverride = newLt;
                     _dirty = true;
                 }
+
+                GUI.enabled = true;
 
                 if (GUILayout.Button("Remove", GUILayout.Width(90)))
                 {
