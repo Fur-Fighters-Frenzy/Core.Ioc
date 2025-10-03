@@ -18,6 +18,7 @@ namespace Validosik.Core.Ioc
 
         private readonly Dictionary<Type, Binding> _bindings; // interface -> binding
         private readonly Dictionary<Type, object> _scopedSingles; // interface -> instance (Scoped only)
+        private readonly Dictionary<Type, object> _resolversCache;
         private readonly Func<Type, object> _getShared; // get from manager-shared storage
         private readonly Action<Type, object> _putShared; // put into manager-shared storage
 
@@ -30,6 +31,7 @@ namespace Validosik.Core.Ioc
         {
             _bindings = new Dictionary<Type, Binding>();
             _scopedSingles = new Dictionary<Type, object>();
+            _resolversCache = new Dictionary<Type, object>();
             _getShared = getShared;
             _putShared = putShared;
             _getResolverContext = getResolverContext ?? (() => _defaultResolverContext);
@@ -83,9 +85,13 @@ namespace Validosik.Core.Ioc
                         return shared;
                     }
 
-                    var created = CreateForBinding(interfaceType, binding);
-                    _putShared(interfaceType, created);
-                    return created;
+                    var (instance, withResolver) = CreateForBinding(interfaceType, binding);
+                    if (!withResolver)
+                    {
+                        _putShared(interfaceType, instance);
+                    }
+
+                    return instance;
                 }
                 case ServiceLifetime.Scoped:
                 {
@@ -94,12 +100,16 @@ namespace Validosik.Core.Ioc
                         return existing;
                     }
 
-                    var created = CreateForBinding(interfaceType, binding);
-                    _scopedSingles[interfaceType] = created;
-                    return created;
+                    var (instance, withResolver) = CreateForBinding(interfaceType, binding);
+                    if (!withResolver)
+                    {
+                        _scopedSingles[interfaceType] = instance;
+                    }
+
+                    return instance;
                 }
                 case ServiceLifetime.Transient:
-                    return CreateForBinding(interfaceType, binding);
+                    return CreateForBinding(interfaceType, binding).instance;
 
                 default: throw new ArgumentOutOfRangeException();
             }
@@ -126,16 +136,26 @@ namespace Validosik.Core.Ioc
             }
         }
 
-        private object CreateForBinding(Type interfaceType, Binding binding)
+        /// <returns>Instantiated object and flag if it was instantiated using resolver or not</returns>
+        private (object instance, bool withResolver) CreateForBinding(Type interfaceType, Binding binding)
         {
             if (!binding.UsesResolver)
             {
                 // Normal implementation binding
-                return Create(binding.TargetType);
+                return (Create(binding.TargetType), false);
             }
 
             // binding.TargetType is resolver type: IContainableResolver<TInterface>
-            var resolver = Activator.CreateInstance(binding.TargetType);
+            object resolver;
+            if (_resolversCache.TryGetValue(binding.TargetType, out var cachedResolver))
+            {
+                resolver = cachedResolver;
+            }
+            else
+            {
+                resolver = _resolversCache[binding.TargetType] = Activator.CreateInstance(binding.TargetType);
+            }
+
             // Call resolver.Resolve(ResolverContext)
             var m = binding.TargetType.GetMethod("Resolve", BindingFlags.Instance | BindingFlags.Public);
             if (m == null)
@@ -150,7 +170,7 @@ namespace Validosik.Core.Ioc
                 throw new InvalidOperationException("Resolver returned invalid type for " + interfaceType.FullName);
             }
 
-            return Create(implType);
+            return (Create(implType), true);
         }
 
         private object Create(Type impl)
