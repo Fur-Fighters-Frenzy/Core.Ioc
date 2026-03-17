@@ -26,7 +26,9 @@ namespace Validosik.Core.Editor.Ioc
             public string InterfaceGuid;
             public string LifetimeDefault; // enum as string
             public bool UseResolver;
+            public string ResolverGuid;
             public string ResolverType; // AQN or empty
+            public string ImplementationGuid;
             public string ImplementationType; // AQN or empty
             public string LifetimeOverride; // enum as string or empty
         }
@@ -39,7 +41,7 @@ namespace Validosik.Core.Editor.Ioc
 
         [Serializable] private sealed class PersistRoot
         {
-            public int Version = 1;
+            public int Version = 2;
             public List<PersistContainer> Containers = new List<PersistContainer>();
         }
 
@@ -50,7 +52,9 @@ namespace Validosik.Core.Editor.Ioc
             public string InterfaceGuid;
             public ServiceLifetime LifetimeDefault;
             public bool UseResolver;
+            public string ResolverGuid;
             public Type ResolverType;
+            public string ImplementationGuid;
             public Type ImplementationType;
             public ServiceLifetime? LifetimeOverride;
         }
@@ -67,6 +71,14 @@ namespace Validosik.Core.Editor.Ioc
         private readonly List<Type> _implementations = new List<Type>();
         private readonly List<Type> _resolvers = new List<Type>();
         private readonly List<ContainerSpec> _containers = new List<ContainerSpec>();
+        private readonly Dictionary<string, Type> _contractsByGuid = new Dictionary<string, Type>(StringComparer.Ordinal);
+        private readonly Dictionary<Type, string> _contractGuidsByType = new Dictionary<Type, string>();
+        private readonly Dictionary<string, Type> _implementationsByGuid =
+            new Dictionary<string, Type>(StringComparer.Ordinal);
+
+        private readonly Dictionary<Type, string> _implementationGuidsByType = new Dictionary<Type, string>();
+        private readonly Dictionary<string, Type> _typesByAssetGuid = new Dictionary<string, Type>(StringComparer.Ordinal);
+        private readonly Dictionary<Type, string> _assetGuidsByType = new Dictionary<Type, string>();
 
         private int _containerIndex = -1;
         private string _newContainerKey = "Game";
@@ -168,6 +180,8 @@ namespace Validosik.Core.Editor.Ioc
                     break;
                 }
             }
+
+            RebuildTypeGuidLookups();
         }
 
         // ---------- GUI ----------
@@ -301,7 +315,7 @@ namespace Validosik.Core.Editor.Ioc
                     container.Rows.Add(new Row
                     {
                         InterfaceType = t,
-                        InterfaceGuid = ca != null ? ca.Guid : "",
+                        InterfaceGuid = ResolveContractGuid(t) ?? ca?.Guid ?? "",
                         LifetimeDefault = ca?.DefaultLifetime ?? ServiceLifetime.Scoped,
                         UseResolver = false
                     });
@@ -343,7 +357,9 @@ namespace Validosik.Core.Editor.Ioc
                 if (newUseResolver != row.UseResolver)
                 {
                     row.UseResolver = newUseResolver;
+                    row.ResolverGuid = null;
                     row.ResolverType = null;
+                    row.ImplementationGuid = null;
                     row.ImplementationType = null;
                     _lastTopology = null;
                     _lastWarnings = null;
@@ -364,6 +380,7 @@ namespace Validosik.Core.Editor.Ioc
                     if (resolverCandidates.Length > 0 && resolverCandidates[newIdx] != row.ResolverType)
                     {
                         row.ResolverType = resolverCandidates[newIdx];
+                        row.ResolverGuid = ResolveAssetGuid(row.ResolverType);
                         _dirty = true;
                     }
                 }
@@ -379,6 +396,7 @@ namespace Validosik.Core.Editor.Ioc
                     if (implCandidates.Length > 0 && implCandidates[newIdx] != row.ImplementationType)
                     {
                         row.ImplementationType = implCandidates[newIdx];
+                        row.ImplementationGuid = ResolveImplementationGuid(row.ImplementationType);
                         _dirty = true;
                     }
                 }
@@ -662,6 +680,7 @@ namespace Validosik.Core.Editor.Ioc
             var all =
                 new List<(string containerKey, IList<(Type iface, Type impl, ServiceLifetime lt, Type resolver)>
                     bindings)>(_containers.Count);
+            var errors = new List<string>();
 
             for (var c = 0; c < _containers.Count; ++c)
             {
@@ -671,6 +690,33 @@ namespace Validosik.Core.Editor.Ioc
                 for (var i = 0; i < cont.Rows.Count; ++i)
                 {
                     var row = cont.Rows[i];
+                    RefreshRowGuids(row);
+
+                    if (row.InterfaceType == null)
+                    {
+                        errors.Add(
+                            $"[{cont.Key}] Unresolved interface in row {i + 1}. InterfaceGuid='{row.InterfaceGuid ?? ""}'.");
+                        continue;
+                    }
+
+                    if (row.UseResolver)
+                    {
+                        if (row.ResolverType == null)
+                        {
+                            errors.Add(
+                                $"[{cont.Key}] Resolver for {ShortType(row.InterfaceType)} is unresolved. ResolverGuid='{row.ResolverGuid ?? ""}'.");
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        if (row.ImplementationType == null)
+                        {
+                            errors.Add(
+                                $"[{cont.Key}] Implementation for {ShortType(row.InterfaceType)} is unresolved. ImplementationGuid='{row.ImplementationGuid ?? ""}'.");
+                            continue;
+                        }
+                    }
 
                     bindings.Add((
                         row.InterfaceType,
@@ -681,6 +727,17 @@ namespace Validosik.Core.Editor.Ioc
                 }
 
                 all.Add((cont.Key, bindings));
+            }
+
+            if (errors.Count > 0)
+            {
+                for (var i = 0; i < errors.Count; ++i)
+                {
+                    Debug.LogError("[Containable] " + errors[i]);
+                }
+
+                throw new InvalidOperationException(
+                    "Containable registries generation aborted because some bindings could not be restored from GUIDs.");
             }
 
             const string outDir = "Assets/Generated/Containable";
@@ -701,13 +758,18 @@ namespace Validosik.Core.Editor.Ioc
                 for (var i = 0; i < cont.Rows.Count; ++i)
                 {
                     var r = cont.Rows[i];
+                    RefreshRowGuids(r);
                     pc.Rows.Add(new PersistRow
                     {
-                        InterfaceType = r.InterfaceType.AssemblyQualifiedName,
-                        InterfaceGuid = r.InterfaceGuid,
+                        InterfaceType = r.InterfaceType != null ? r.InterfaceType.AssemblyQualifiedName : "",
+                        InterfaceGuid = ResolveContractGuid(r.InterfaceType) ?? r.InterfaceGuid,
                         LifetimeDefault = r.LifetimeDefault.ToString(),
                         UseResolver = r.UseResolver,
+                        ResolverGuid = r.UseResolver ? ResolveAssetGuid(r.ResolverType) ?? r.ResolverGuid : "",
                         ResolverType = r.ResolverType != null ? r.ResolverType.AssemblyQualifiedName : "",
+                        ImplementationGuid = !r.UseResolver
+                            ? ResolveImplementationGuid(r.ImplementationType) ?? r.ImplementationGuid
+                            : "",
                         ImplementationType = r.ImplementationType != null
                             ? r.ImplementationType.AssemblyQualifiedName
                             : "",
@@ -734,32 +796,64 @@ namespace Validosik.Core.Editor.Ioc
         private void LoadJson()
         {
             var json = File.ReadAllText(JsonPath);
-            var root = JsonUtility.FromJson<PersistRoot>(json);
+            var root = JsonUtility.FromJson<PersistRoot>(json) ?? new PersistRoot();
             _containers.Clear();
+
+            if (root.Containers == null)
+            {
+                root.Containers = new List<PersistContainer>();
+            }
 
             for (var c = 0; c < root.Containers.Count; c++)
             {
                 var pc = root.Containers[c];
+                if (pc == null)
+                {
+                    continue;
+                }
+
                 var cont = new ContainerSpec { Key = pc.Key };
+                if (pc.Rows == null)
+                {
+                    _containers.Add(cont);
+                    continue;
+                }
 
                 for (var i = 0; i < pc.Rows.Count; ++i)
                 {
                     var pr = pc.Rows[i];
+                    if (pr == null)
+                    {
+                        continue;
+                    }
+
+                    var interfaceType = ResolveContractType(pr);
+                    if (interfaceType == null)
+                    {
+                        Debug.LogWarning(
+                            $"[Containable] Skipped binding row in container '{pc.Key}' because interface GUID '{pr.InterfaceGuid}' could not be restored.");
+                        continue;
+                    }
+
+                    var interfaceGuid = ResolveContractGuid(interfaceType) ?? pr.InterfaceGuid;
                     var row = new Row
                     {
-                        InterfaceType = ResolveType(pr.InterfaceType),
-                        InterfaceGuid = pr.InterfaceGuid,
+                        InterfaceType = interfaceType,
+                        InterfaceGuid = interfaceGuid,
                         LifetimeDefault = ParseEnum(pr.LifetimeDefault, ServiceLifetime.Scoped),
                         UseResolver = pr.UseResolver,
-                        ResolverType = string.IsNullOrEmpty(pr.ResolverType) ? null : ResolveType(pr.ResolverType),
-                        ImplementationType = string.IsNullOrEmpty(pr.ImplementationType)
-                            ? null
-                            : ResolveType(pr.ImplementationType),
+                        ResolverGuid = pr.ResolverGuid,
+                        ResolverType = pr.UseResolver ? ResolveResolverType(pr, interfaceType) : null,
+                        ImplementationGuid = pr.ImplementationGuid,
+                        ImplementationType = pr.UseResolver ? null : ResolveImplementationType(pr, interfaceGuid),
                         LifetimeOverride = string.IsNullOrEmpty(pr.LifetimeOverride)
                             ? (ServiceLifetime?)null
                             : ParseEnum(pr.LifetimeOverride, ServiceLifetime.Scoped)
                     };
-                    if (row.InterfaceType != null) cont.Rows.Add(row);
+
+                    RefreshRowGuids(row);
+                    LogUnresolvedBinding(pc.Key, row, pr);
+                    cont.Rows.Add(row);
                 }
 
                 _containers.Add(cont);
@@ -788,6 +882,232 @@ namespace Validosik.Core.Editor.Ioc
             }
 
             return null;
+        }
+
+        private void RebuildTypeGuidLookups()
+        {
+            _contractsByGuid.Clear();
+            _contractGuidsByType.Clear();
+            _implementationsByGuid.Clear();
+            _implementationGuidsByType.Clear();
+            _typesByAssetGuid.Clear();
+            _assetGuidsByType.Clear();
+
+            for (var i = 0; i < _contracts.Count; ++i)
+            {
+                var contractType = _contracts[i];
+                var attr = GetContractAttribute(contractType);
+                if (attr == null || string.IsNullOrEmpty(attr.Guid))
+                {
+                    continue;
+                }
+
+                _contractsByGuid[attr.Guid] = contractType;
+                _contractGuidsByType[contractType] = attr.Guid;
+            }
+
+            for (var i = 0; i < _implementations.Count; ++i)
+            {
+                var implementationType = _implementations[i];
+                var attr = GetImplementationAttribute(implementationType);
+                if (attr == null || string.IsNullOrEmpty(attr.ImplGuid))
+                {
+                    continue;
+                }
+
+                _implementationsByGuid[attr.ImplGuid] = implementationType;
+                _implementationGuidsByType[implementationType] = attr.ImplGuid;
+            }
+
+            var scriptGuids = AssetDatabase.FindAssets("t:MonoScript");
+            for (var i = 0; i < scriptGuids.Length; ++i)
+            {
+                var guid = scriptGuids[i];
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (string.IsNullOrEmpty(path))
+                {
+                    continue;
+                }
+
+                var script = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
+                var type = script != null ? script.GetClass() : null;
+                if (type == null)
+                {
+                    continue;
+                }
+
+                if (!_contracts.Contains(type) && !_implementations.Contains(type) && !_resolvers.Contains(type))
+                {
+                    continue;
+                }
+
+                _typesByAssetGuid[guid] = type;
+                _assetGuidsByType[type] = guid;
+            }
+        }
+
+        private static ContainableServiceContractAttribute GetContractAttribute(Type type)
+            => type == null
+                ? null
+                : (ContainableServiceContractAttribute)Attribute.GetCustomAttribute(type,
+                    typeof(ContainableServiceContractAttribute));
+
+        private static ContainableServiceImplementationAttribute GetImplementationAttribute(Type type)
+            => type == null
+                ? null
+                : (ContainableServiceImplementationAttribute)Attribute.GetCustomAttribute(type,
+                    typeof(ContainableServiceImplementationAttribute));
+
+        private Type ResolveContractType(PersistRow row)
+        {
+            if (!string.IsNullOrEmpty(row.InterfaceGuid) && _contractsByGuid.TryGetValue(row.InterfaceGuid, out var byGuid))
+            {
+                return byGuid;
+            }
+
+            var byName = ResolveType(row.InterfaceType);
+            return byName != null && _contracts.Contains(byName) ? byName : null;
+        }
+
+        private Type ResolveImplementationType(PersistRow row, string interfaceGuid)
+        {
+            if (!string.IsNullOrEmpty(row.ImplementationGuid)
+                && _implementationsByGuid.TryGetValue(row.ImplementationGuid, out var byGuid))
+            {
+                var attr = GetImplementationAttribute(byGuid);
+                if (attr != null && (string.IsNullOrEmpty(interfaceGuid) || attr.ContractGuid == interfaceGuid))
+                {
+                    return byGuid;
+                }
+            }
+
+            var byName = ResolveType(row.ImplementationType);
+            if (byName != null
+                && _implementations.Contains(byName)
+                && (string.IsNullOrEmpty(interfaceGuid) || string.Equals(
+                    GetImplementationAttribute(byName)?.ContractGuid,
+                    interfaceGuid,
+                    StringComparison.Ordinal)))
+            {
+                return byName;
+            }
+
+            if (string.IsNullOrEmpty(interfaceGuid))
+            {
+                return null;
+            }
+
+            var fallback = _implementations
+                .Where(t => string.Equals(GetImplementationAttribute(t)?.ContractGuid, interfaceGuid, StringComparison.Ordinal))
+                .ToArray();
+
+            return fallback.Length == 1 ? fallback[0] : null;
+        }
+
+        private Type ResolveResolverType(PersistRow row, Type interfaceType)
+        {
+            if (!string.IsNullOrEmpty(row.ResolverGuid) && _typesByAssetGuid.TryGetValue(row.ResolverGuid, out var byGuid)
+                && IsResolverFor(byGuid, interfaceType))
+            {
+                return byGuid;
+            }
+
+            var byName = ResolveType(row.ResolverType);
+            if (IsResolverFor(byName, interfaceType))
+            {
+                return byName;
+            }
+
+            var fallback = _resolvers.Where(t => IsResolverFor(t, interfaceType)).ToArray();
+            return fallback.Length == 1 ? fallback[0] : null;
+        }
+
+        private void RefreshRowGuids(Row row)
+        {
+            if (row == null)
+            {
+                return;
+            }
+
+            row.InterfaceGuid = ResolveContractGuid(row.InterfaceType) ?? row.InterfaceGuid;
+            row.ImplementationGuid = ResolveImplementationGuid(row.ImplementationType) ?? row.ImplementationGuid;
+            row.ResolverGuid = ResolveAssetGuid(row.ResolverType) ?? row.ResolverGuid;
+        }
+
+        private string ResolveContractGuid(Type type)
+        {
+            if (type == null)
+            {
+                return null;
+            }
+
+            if (_contractGuidsByType.TryGetValue(type, out var guid))
+            {
+                return guid;
+            }
+
+            return GetContractAttribute(type)?.Guid;
+        }
+
+        private string ResolveImplementationGuid(Type type)
+        {
+            if (type == null)
+            {
+                return null;
+            }
+
+            if (_implementationGuidsByType.TryGetValue(type, out var guid))
+            {
+                return guid;
+            }
+
+            return GetImplementationAttribute(type)?.ImplGuid;
+        }
+
+        private string ResolveAssetGuid(Type type)
+        {
+            if (type == null)
+            {
+                return null;
+            }
+
+            return _assetGuidsByType.TryGetValue(type, out var guid) ? guid : null;
+        }
+
+        private static bool IsResolverFor(Type resolverType, Type interfaceType)
+        {
+            if (resolverType == null || interfaceType == null)
+            {
+                return false;
+            }
+
+            return resolverType.GetInterfaces().Any(it =>
+                it.IsGenericType
+                && it.GetGenericTypeDefinition() == typeof(IContainableResolver<>)
+                && it.GetGenericArguments()[0] == interfaceType);
+        }
+
+        private static void LogUnresolvedBinding(string containerKey, Row row, PersistRow persistedRow)
+        {
+            if (row == null || persistedRow == null)
+            {
+                return;
+            }
+
+            if (!row.UseResolver && row.ImplementationType == null
+                && (!string.IsNullOrEmpty(persistedRow.ImplementationType)
+                    || !string.IsNullOrEmpty(persistedRow.ImplementationGuid)))
+            {
+                Debug.LogWarning(
+                    $"[Containable] Implementation for {ShortType(row.InterfaceType)} in container '{containerKey}' could not be restored by GUID '{persistedRow.ImplementationGuid}'.");
+            }
+
+            if (row.UseResolver && row.ResolverType == null
+                && (!string.IsNullOrEmpty(persistedRow.ResolverType) || !string.IsNullOrEmpty(persistedRow.ResolverGuid)))
+            {
+                Debug.LogWarning(
+                    $"[Containable] Resolver for {ShortType(row.InterfaceType)} in container '{containerKey}' could not be restored by GUID '{persistedRow.ResolverGuid}'.");
+            }
         }
 
         private static T ParseEnum<T>(string @enum, T @default) where T : struct

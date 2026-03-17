@@ -69,18 +69,23 @@ namespace Validosik.Core.Editor.Ioc.CodeGeneration
             for (var i = 0; i < bindings.Count; ++i)
             {
                 var b = bindings[i];
+                var interfaceType = b.iface ?? throw new InvalidOperationException(
+                    "Generated binding contains a null interface type for container '" + containerKey + "'.");
                 if (b.resolver == null)
                 {
+                    var implementationType = b.impl ?? throw new InvalidOperationException(
+                        "Generated binding contains a null implementation type for container '" + containerKey + "'.");
                     sb.Append("                new Binding(typeof(")
-                        .Append(b.iface.FullName).Append("), typeof(")
-                        .Append(b.impl.FullName).Append("), ServiceLifetime.")
+                        .Append(GetTypeReference(interfaceType)).Append("), typeof(")
+                        .Append(GetTypeReference(implementationType)).Append("), ServiceLifetime.")
                         .Append(b.lt.ToString()).Append(")");
                 }
                 else
                 {
+                    var resolverType = b.resolver;
                     sb.Append("                new Binding(typeof(")
-                        .Append(b.iface.FullName).Append("), typeof(")
-                        .Append(b.resolver.FullName).Append("), ServiceLifetime.")
+                        .Append(GetTypeReference(interfaceType)).Append("), typeof(")
+                        .Append(GetTypeReference(resolverType)).Append("), ServiceLifetime.")
                         .Append(b.lt.ToString()).Append(", true)");
                 }
 
@@ -171,6 +176,12 @@ namespace Validosik.Core.Editor.Ioc.CodeGeneration
         private static string Escape(string s)
         {
             return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        private static string GetTypeReference(Type type)
+        {
+            if (type == null) throw new ArgumentNullException(nameof(type));
+            return "global::" + (type.FullName ?? type.Name).Replace("+", ".");
         }
 
         private static string RelativeToProject(string abs)
