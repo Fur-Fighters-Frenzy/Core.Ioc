@@ -95,10 +95,10 @@ namespace Validosik.Core.Editor.Ioc
         private const string JsonPath = "Assets/ContainableBindings.json";
 
         // ---------- menu ----------
-        [MenuItem("Tools/Containable/Configurator")]
+        [MenuItem("Tools/IOC/Configurator")]
         public static void Open()
         {
-            var w = GetWindow<ContainableConfiguratorWindow>("Containable Config");
+            var w = GetWindow<ContainableConfiguratorWindow>("IOC");
             w.minSize = new Vector2(1100, 650);
         }
 
@@ -127,7 +127,7 @@ namespace Validosik.Core.Editor.Ioc
                     return;
                 }
 
-                var save = EditorUtility.DisplayDialog("Containable Config",
+                var save = EditorUtility.DisplayDialog("IOC",
                     "You have unsaved changes. Save before closing?",
                     "Save", "Don't Save");
                 if (save) SaveJson();
@@ -259,23 +259,12 @@ namespace Validosik.Core.Editor.Ioc
                 }
             }
 
-            if (GUILayout.Button("Generate All Registries", GUILayout.Width(200)))
-            {
-                try
-                {
-                    GenerateAllRegistries();
-                }
-                catch (Exception e)
-                {
-                    Debug.LogException(e);
-                }
-            }
-
-            if (GUILayout.Button("Save JSON", GUILayout.Width(100)))
+            if (GUILayout.Button("Save + Generate Registries", GUILayout.Width(220)))
             {
                 try
                 {
                     SaveJson();
+                    GenerateAllRegistries();
                 }
                 catch (Exception e)
                 {
@@ -366,44 +355,9 @@ namespace Validosik.Core.Editor.Ioc
                     _dirty = true;
                 }
 
-                if (row.UseResolver)
-                {
-                    var resolverCandidates = _resolvers
-                        .Where(r => r.GetInterfaces().Any(it =>
-                            it.IsGenericType && it.GetGenericTypeDefinition() == typeof(IContainableResolver<>)
-                                             && it.GetGenericArguments()[0] == row.InterfaceType))
-                        .OrderBy(t => t.Name).ToArray();
-
-                    var idx = Array.IndexOf(resolverCandidates, row.ResolverType);
-                    var names = resolverCandidates.Select(ShortType).ToArray();
-                    var newIdx = EditorGUILayout.Popup(new GUIContent("Resolver"), Mathf.Max(0, idx), names);
-                    if (resolverCandidates.Length > 0 && resolverCandidates[newIdx] != row.ResolverType)
-                    {
-                        row.ResolverType = resolverCandidates[newIdx];
-                        row.ResolverGuid = ResolveAssetGuid(row.ResolverType);
-                        _dirty = true;
-                    }
-                }
-                else
-                {
-                    var implCandidates = _implementations
-                        .Where(impl => row.InterfaceType.IsAssignableFrom(impl))
-                        .OrderBy(t => t.Name).ToArray();
-
-                    var idx = Array.IndexOf(implCandidates, row.ImplementationType);
-                    var names = implCandidates.Select(ShortType).ToArray();
-                    var newIdx = EditorGUILayout.Popup(new GUIContent("Implementation"), Mathf.Max(0, idx), names);
-                    if (implCandidates.Length > 0 && implCandidates[newIdx] != row.ImplementationType)
-                    {
-                        row.ImplementationType = implCandidates[newIdx];
-                        row.ImplementationGuid = ResolveImplementationGuid(row.ImplementationType);
-                        _dirty = true;
-                    }
-                }
-
                 GUI.enabled = !row.UseResolver;
                 var lifetime = row.LifetimeOverride ?? row.LifetimeDefault;
-                var newLt = (ServiceLifetime)EditorGUILayout.EnumPopup("Lifetime", lifetime, GUILayout.Width(260));
+                var newLt = (ServiceLifetime)EditorGUILayout.EnumPopup(lifetime, GUILayout.Width(110));
                 if (newLt != lifetime)
                 {
                     row.LifetimeOverride = newLt;
@@ -411,6 +365,7 @@ namespace Validosik.Core.Editor.Ioc
                 }
 
                 GUI.enabled = true;
+                GUILayout.FlexibleSpace();
 
                 if (GUILayout.Button("Remove", GUILayout.Width(90)))
                 {
@@ -425,6 +380,50 @@ namespace Validosik.Core.Editor.Ioc
                 }
 
                 EditorGUILayout.EndHorizontal();
+
+                if (row.UseResolver)
+                {
+                    var resolverCandidates = _resolvers
+                        .Where(r => r.GetInterfaces().Any(it =>
+                            it.IsGenericType && it.GetGenericTypeDefinition() == typeof(IContainableResolver<>)
+                                             && it.GetGenericArguments()[0] == row.InterfaceType))
+                        .OrderBy(t => t.FullName ?? t.Name)
+                        .ToArray();
+
+                    DrawTypeSelectionDropdown(
+                        row.ResolverType,
+                        resolverCandidates,
+                        "Select resolver",
+                        selectedType =>
+                        {
+                            row.ResolverType = selectedType;
+                            row.ResolverGuid = ResolveAssetGuid(selectedType);
+                            _lastTopology = null;
+                            _lastWarnings = null;
+                            _dirty = true;
+                        });
+                }
+                else
+                {
+                    var implCandidates = _implementations
+                        .Where(impl => row.InterfaceType.IsAssignableFrom(impl))
+                        .OrderBy(t => t.FullName ?? t.Name)
+                        .ToArray();
+
+                    DrawTypeSelectionDropdown(
+                        row.ImplementationType,
+                        implCandidates,
+                        "Select implementation",
+                        selectedType =>
+                        {
+                            row.ImplementationType = selectedType;
+                            row.ImplementationGuid = ResolveImplementationGuid(selectedType);
+                            _lastTopology = null;
+                            _lastWarnings = null;
+                            _dirty = true;
+                        });
+                }
+
                 EditorGUILayout.EndVertical();
             }
 
@@ -1108,6 +1107,44 @@ namespace Validosik.Core.Editor.Ioc
                 Debug.LogWarning(
                     $"[Containable] Resolver for {ShortType(row.InterfaceType)} in container '{containerKey}' could not be restored by GUID '{persistedRow.ResolverGuid}'.");
             }
+        }
+
+        private void DrawTypeSelectionDropdown(
+            Type selectedType,
+            Type[] candidates,
+            string emptyLabel,
+            Action<Type> onSelected)
+        {
+            var buttonContent = new GUIContent(
+                selectedType != null ? selectedType.Name : emptyLabel,
+                selectedType != null ? selectedType.FullName : emptyLabel);
+
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight, GUILayout.ExpandWidth(true));
+            if (!EditorGUI.DropdownButton(rect, buttonContent, FocusType.Passive))
+            {
+                return;
+            }
+
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent("<None>"), selectedType == null, () => onSelected(null));
+
+            if (candidates.Length == 0)
+            {
+                menu.AddDisabledItem(new GUIContent("No matching types"));
+            }
+            else
+            {
+                menu.AddSeparator("");
+                for (var i = 0; i < candidates.Length; ++i)
+                {
+                    var candidate = candidates[i];
+                    var item = candidate;
+                    var itemLabel = item.FullName ?? item.Name;
+                    menu.AddItem(new GUIContent(itemLabel), item == selectedType, () => onSelected(item));
+                }
+            }
+
+            menu.DropDown(rect);
         }
 
         private static T ParseEnum<T>(string @enum, T @default) where T : struct
