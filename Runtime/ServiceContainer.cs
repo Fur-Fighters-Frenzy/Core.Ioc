@@ -15,6 +15,7 @@ namespace Validosik.Core.Ioc
     internal class ServiceContainer : IServiceContainer
     {
         private static readonly ResolverContext _defaultResolverContext = new ResolverContext();
+        private static readonly Type _resolverOpenGenericType = typeof(IContainableResolver<>);
 
         private readonly Dictionary<Type, Binding> _bindings; // interface -> binding
         private readonly Dictionary<Type, object> _scopedSingles; // interface -> instance (Scoped only)
@@ -38,7 +39,7 @@ namespace Validosik.Core.Ioc
 
             foreach (var b in bindings)
             {
-                _bindings[b.InterfaceType] = b;
+                AddBinding(b);
             }
         }
 
@@ -58,6 +59,37 @@ namespace Validosik.Core.Ioc
         public void SetResolverContextFunc([NotNull] Func<ResolverContext> getResolverContext)
         {
             _getResolverContext = getResolverContext;
+        }
+
+        public bool ContainsBinding(Type interfaceType)
+        {
+            if (interfaceType == null)
+            {
+                throw new ArgumentNullException(nameof(interfaceType));
+            }
+
+            return _bindings.ContainsKey(interfaceType);
+        }
+
+        public void AddBinding([NotNull] Binding binding)
+        {
+            if (!TryAddBinding(binding))
+            {
+                throw new InvalidOperationException("Binding already exists for " + binding.InterfaceType.FullName);
+            }
+        }
+
+        public bool TryAddBinding([NotNull] Binding binding)
+        {
+            ValidateBinding(binding);
+
+            if (_bindings.ContainsKey(binding.InterfaceType))
+            {
+                return false;
+            }
+
+            _bindings.Add(binding.InterfaceType, binding);
+            return true;
         }
 
         public T Resolve<T>() where T : class => (T)Resolve(typeof(T));
@@ -238,5 +270,76 @@ namespace Validosik.Core.Ioc
         }
 
         private static object GetDefault(Type t) => t.IsValueType ? Activator.CreateInstance(t) : null;
+
+        private static void ValidateBinding([NotNull] Binding binding)
+        {
+            if (binding == null)
+            {
+                throw new ArgumentNullException(nameof(binding));
+            }
+
+            if (binding.InterfaceType == null)
+            {
+                throw new ArgumentException("Binding.InterfaceType is null.", nameof(binding));
+            }
+
+            if (binding.TargetType == null)
+            {
+                throw new ArgumentException("Binding.TargetType is null.", nameof(binding));
+            }
+
+            if (binding.TargetType.IsAbstract || binding.TargetType.IsInterface)
+            {
+                throw new ArgumentException(
+                    "Binding target type '" + binding.TargetType.FullName + "' is not instantiable.",
+                    nameof(binding));
+            }
+
+            if (!binding.UsesResolver)
+            {
+                if (!binding.InterfaceType.IsAssignableFrom(binding.TargetType))
+                {
+                    throw new ArgumentException(
+                        "Binding target type '" + binding.TargetType.FullName +
+                        "' is not assignable to '" + binding.InterfaceType.FullName + "'.",
+                        nameof(binding));
+                }
+
+                return;
+            }
+
+            if (!ImplementsResolverContract(binding.TargetType, binding.InterfaceType))
+            {
+                throw new ArgumentException(
+                    "Resolver type '" + binding.TargetType.FullName +
+                    "' must implement IContainableResolver<" + binding.InterfaceType.FullName + ">.",
+                    nameof(binding));
+            }
+        }
+
+        private static bool ImplementsResolverContract(Type resolverType, Type interfaceType)
+        {
+            var interfaces = resolverType.GetInterfaces();
+            for (var i = 0; i < interfaces.Length; ++i)
+            {
+                var candidate = interfaces[i];
+                if (!candidate.IsGenericType)
+                {
+                    continue;
+                }
+
+                if (candidate.GetGenericTypeDefinition() != _resolverOpenGenericType)
+                {
+                    continue;
+                }
+
+                if (candidate.GetGenericArguments()[0] == interfaceType)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 }

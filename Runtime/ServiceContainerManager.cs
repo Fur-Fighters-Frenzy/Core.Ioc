@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using JetBrains.Annotations;
 using Validosik.Core.Ioc.Generated;
-using Validosik.Core.Ioc.Interfaces;
 using Validosik.Core.Ioc.Resolvers;
 
 namespace Validosik.Core.Ioc
@@ -13,8 +12,8 @@ namespace Validosik.Core.Ioc
     /// </summary>
     public class ServiceContainerManager
     {
-        private readonly Dictionary<string, IServiceContainer> _containers =
-            new Dictionary<string, IServiceContainer>(StringComparer.Ordinal);
+        private readonly Dictionary<string, ServiceContainer> _containers =
+            new Dictionary<string, ServiceContainer>(StringComparer.Ordinal);
 
         private readonly Dictionary<Type, object> _shared = new Dictionary<Type, object>(); // interface->instance
         private string _activeKey;
@@ -54,24 +53,44 @@ namespace Validosik.Core.Ioc
 
         public virtual void SwitchContainer(string key, [CanBeNull] Func<ResolverContext> getResolverContext)
         {
-            if (string.IsNullOrEmpty(key))
-            {
-                throw new ArgumentException("key");
-            }
-
-            if (!_containers.ContainsKey(key))
-            {
-                throw new KeyNotFoundException("No container: " + key);
-            }
-
+            var container = GetContainerOrThrow(key);
             _activeKey = key; // Shared lives in _shared; nothing else to do
             if (getResolverContext != null)
             {
-                var container = CurrentContainerOrThrow();
                 container.SetResolverContextFunc(getResolverContext);
             }
 
             ContainerSwitched?.Invoke(key);
+        }
+
+        public bool ContainsBinding(Type interfaceType)
+        {
+            return CurrentContainerOrThrow().ContainsBinding(interfaceType);
+        }
+
+        public bool ContainsBinding(string key, Type interfaceType)
+        {
+            return GetContainerOrThrow(key).ContainsBinding(interfaceType);
+        }
+
+        public virtual void AddBinding(Binding binding)
+        {
+            CurrentContainerOrThrow().AddBinding(binding);
+        }
+
+        public virtual void AddBinding(string key, Binding binding)
+        {
+            GetContainerOrThrow(key).AddBinding(binding);
+        }
+
+        public virtual bool TryAddBinding(Binding binding)
+        {
+            return CurrentContainerOrThrow().TryAddBinding(binding);
+        }
+
+        public virtual bool TryAddBinding(string key, Binding binding)
+        {
+            return GetContainerOrThrow(key).TryAddBinding(binding);
         }
 
         public T Resolve<T>() where T : class => (T)Resolve(typeof(T));
@@ -95,11 +114,26 @@ namespace Validosik.Core.Ioc
             return container.TryResolve(t, out obj);
         }
 
-        private IServiceContainer CurrentContainerOrThrow()
+        private ServiceContainer CurrentContainerOrThrow()
         {
             if (_activeKey == null || !_containers.TryGetValue(_activeKey, out var container))
             {
                 throw new InvalidOperationException("No active container");
+            }
+
+            return container;
+        }
+
+        private ServiceContainer GetContainerOrThrow(string key)
+        {
+            if (string.IsNullOrEmpty(key))
+            {
+                throw new ArgumentException("key");
+            }
+
+            if (!_containers.TryGetValue(key, out var container))
+            {
+                throw new KeyNotFoundException("No container: " + key);
             }
 
             return container;
