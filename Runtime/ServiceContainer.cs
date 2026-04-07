@@ -18,6 +18,7 @@ namespace Validosik.Core.Ioc
         private static readonly Type _resolverOpenGenericType = typeof(IContainableResolver<>);
 
         private readonly Dictionary<Type, Binding> _bindings; // interface -> binding
+        private readonly Dictionary<Type, object> _instances; // interface -> pre-registered instance
         private readonly Dictionary<Type, object> _scopedSingles; // interface -> instance (Scoped only)
         private readonly Dictionary<Type, object> _resolversCache;
         private readonly Func<Type, object> _getShared; // get from manager-shared storage
@@ -31,6 +32,7 @@ namespace Validosik.Core.Ioc
             [CanBeNull] Func<ResolverContext> getResolverContext)
         {
             _bindings = new Dictionary<Type, Binding>();
+            _instances = new Dictionary<Type, object>();
             _scopedSingles = new Dictionary<Type, object>();
             _resolversCache = new Dictionary<Type, object>();
             _getShared = getShared;
@@ -54,6 +56,7 @@ namespace Validosik.Core.Ioc
             }
 
             _scopedSingles.Clear();
+            _instances.Clear();
         }
 
         public void SetResolverContextFunc([NotNull] Func<ResolverContext> getResolverContext)
@@ -68,7 +71,38 @@ namespace Validosik.Core.Ioc
                 throw new ArgumentNullException(nameof(interfaceType));
             }
 
-            return _bindings.ContainsKey(interfaceType);
+            return _instances.ContainsKey(interfaceType) || _bindings.ContainsKey(interfaceType);
+        }
+
+        public void RegisterInstance([NotNull] Type interfaceType, [NotNull] object instance)
+        {
+            if (!TryRegisterInstance(interfaceType, instance))
+            {
+                throw new InvalidOperationException("Registration already exists for " + interfaceType.FullName);
+            }
+        }
+
+        public bool TryRegisterInstance([NotNull] Type interfaceType, [NotNull] object instance)
+        {
+            ValidateInstanceRegistration(interfaceType, instance);
+
+            if (_instances.ContainsKey(interfaceType) || _bindings.ContainsKey(interfaceType))
+            {
+                return false;
+            }
+
+            _instances.Add(interfaceType, instance);
+            return true;
+        }
+
+        public bool UnregisterInstance([NotNull] Type interfaceType)
+        {
+            if (interfaceType == null)
+            {
+                throw new ArgumentNullException(nameof(interfaceType));
+            }
+
+            return _instances.Remove(interfaceType);
         }
 
         public void AddBinding([NotNull] Binding binding)
@@ -83,7 +117,7 @@ namespace Validosik.Core.Ioc
         {
             ValidateBinding(binding);
 
-            if (_bindings.ContainsKey(binding.InterfaceType))
+            if (_instances.ContainsKey(binding.InterfaceType) || _bindings.ContainsKey(binding.InterfaceType))
             {
                 return false;
             }
@@ -99,6 +133,11 @@ namespace Validosik.Core.Ioc
             if (interfaceType == null)
             {
                 throw new ArgumentNullException(nameof(interfaceType));
+            }
+
+            if (_instances.TryGetValue(interfaceType, out var registeredInstance))
+            {
+                return registeredInstance;
             }
 
             if (!_bindings.TryGetValue(interfaceType, out var binding))
@@ -314,6 +353,28 @@ namespace Validosik.Core.Ioc
                     "Resolver type '" + binding.TargetType.FullName +
                     "' must implement IContainableResolver<" + binding.InterfaceType.FullName + ">.",
                     nameof(binding));
+            }
+        }
+
+        private static void ValidateInstanceRegistration([NotNull] Type interfaceType, [NotNull] object instance)
+        {
+            if (interfaceType == null)
+            {
+                throw new ArgumentNullException(nameof(interfaceType));
+            }
+
+            if (instance == null)
+            {
+                throw new ArgumentNullException(nameof(instance));
+            }
+
+            var instanceType = instance.GetType();
+            if (!interfaceType.IsAssignableFrom(instanceType))
+            {
+                throw new ArgumentException(
+                    "Instance type '" + instanceType.FullName +
+                    "' is not assignable to '" + interfaceType.FullName + "'.",
+                    nameof(instance));
             }
         }
 

@@ -1,7 +1,7 @@
 {
   "name": "validosik.core.ioc",
   "displayName": "IoC State Container",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "unity": "6000.0",
   "description": "Lightweight IoC with stateful containers and editor tooling for service migration",
   "author": {

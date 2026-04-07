@@ -93,6 +93,106 @@ namespace Validosik.Core.Ioc
             return GetContainerOrThrow(key).TryAddBinding(binding);
         }
 
+        public virtual void RegisterInstance<TContract>([NotNull] TContract instance) where TContract : class
+        {
+            RegisterInstance(typeof(TContract), instance);
+        }
+
+        public virtual void RegisterInstance([NotNull] object instance)
+        {
+            if (instance == null)
+            {
+                throw new ArgumentNullException(nameof(instance));
+            }
+
+            RegisterInstance(instance.GetType(), instance);
+        }
+
+        public virtual void RegisterInstance([NotNull] Type interfaceType, [NotNull] object instance)
+        {
+            CurrentContainerOrThrow().RegisterInstance(interfaceType, instance);
+        }
+
+        public virtual void RegisterInstance<TContract>(string key, [NotNull] TContract instance) where TContract : class
+        {
+            RegisterInstance(key, typeof(TContract), instance);
+        }
+
+        public virtual void RegisterInstance(string key, [NotNull] object instance)
+        {
+            if (instance == null)
+            {
+                throw new ArgumentNullException(nameof(instance));
+            }
+
+            RegisterInstance(key, instance.GetType(), instance);
+        }
+
+        public virtual void RegisterInstance(string key, [NotNull] Type interfaceType, [NotNull] object instance)
+        {
+            GetContainerOrThrow(key).RegisterInstance(interfaceType, instance);
+        }
+
+        public virtual bool TryRegisterInstance<TContract>([NotNull] TContract instance) where TContract : class
+        {
+            return TryRegisterInstance(typeof(TContract), instance);
+        }
+
+        public virtual bool TryRegisterInstance([NotNull] object instance)
+        {
+            if (instance == null)
+            {
+                throw new ArgumentNullException(nameof(instance));
+            }
+
+            return TryRegisterInstance(instance.GetType(), instance);
+        }
+
+        public virtual bool TryRegisterInstance([NotNull] Type interfaceType, [NotNull] object instance)
+        {
+            return CurrentContainerOrThrow().TryRegisterInstance(interfaceType, instance);
+        }
+
+        public virtual bool TryRegisterInstance<TContract>(string key, [NotNull] TContract instance) where TContract : class
+        {
+            return TryRegisterInstance(key, typeof(TContract), instance);
+        }
+
+        public virtual bool TryRegisterInstance(string key, [NotNull] object instance)
+        {
+            if (instance == null)
+            {
+                throw new ArgumentNullException(nameof(instance));
+            }
+
+            return TryRegisterInstance(key, instance.GetType(), instance);
+        }
+
+        public virtual bool TryRegisterInstance(string key, [NotNull] Type interfaceType, [NotNull] object instance)
+        {
+            return GetContainerOrThrow(key).TryRegisterInstance(interfaceType, instance);
+        }
+
+        public virtual bool UnregisterInstance<TContract>() where TContract : class
+        {
+            return UnregisterInstance(typeof(TContract));
+        }
+
+        public virtual bool UnregisterInstance(Type interfaceType)
+        {
+            return CurrentContainerOrThrow().UnregisterInstance(interfaceType);
+        }
+
+        public virtual bool UnregisterInstance<TContract>(string key) where TContract : class
+        {
+            return UnregisterInstance(key, typeof(TContract));
+        }
+
+        public virtual bool UnregisterInstance(string key, Type interfaceType)
+        {
+            return GetContainerOrThrow(key).UnregisterInstance(interfaceType);
+        }
+
         public T Resolve<T>() where T : class => (T)Resolve(typeof(T));
 
         public object Resolve(Type interfaceType)
